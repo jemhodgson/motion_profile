@@ -1,0 +1,55 @@
+Determining if the pthread_create exist failed with the following output:
+Change Dir: /home/salvatore/MotionProfile/build/CMakeFiles/CMakeTmp
+
+Run Build Command:"/usr/bin/make" "cmTC_cc45f/fast"
+/usr/bin/make -f CMakeFiles/cmTC_cc45f.dir/build.make CMakeFiles/cmTC_cc45f.dir/build
+make[1]: ingresso nella directory "/home/salvatore/MotionProfile/build/CMakeFiles/CMakeTmp"
+Building C object CMakeFiles/cmTC_cc45f.dir/CheckSymbolExists.c.o
+/usr/bin/cc    -o CMakeFiles/cmTC_cc45f.dir/CheckSymbolExists.c.o   -c /home/salvatore/MotionProfile/build/CMakeFiles/CMakeTmp/CheckSymbolExists.c
+Linking C executable cmTC_cc45f
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_cc45f.dir/link.txt --verbose=1
+/usr/bin/cc      -rdynamic CMakeFiles/cmTC_cc45f.dir/CheckSymbolExists.c.o  -o cmTC_cc45f 
+CMakeFiles/cmTC_cc45f.dir/CheckSymbolExists.c.o: nella funzione "main":
+CheckSymbolExists.c:(.text+0x1b): riferimento non definito a "pthread_create"
+collect2: error: ld returned 1 exit status
+CMakeFiles/cmTC_cc45f.dir/build.make:97: recipe for target 'cmTC_cc45f' failed
+make[1]: *** [cmTC_cc45f] Error 1
+make[1]: uscita dalla directory "/home/salvatore/MotionProfile/build/CMakeFiles/CMakeTmp"
+Makefile:126: recipe for target 'cmTC_cc45f/fast' failed
+make: *** [cmTC_cc45f/fast] Error 2
+
+File /home/salvatore/MotionProfile/build/CMakeFiles/CMakeTmp/CheckSymbolExists.c:
+/* */
+#include <pthread.h>
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef pthread_create
+  return ((int*)(&pthread_create))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+
+Determining if the function pthread_create exists in the pthreads failed with the following output:
+Change Dir: /home/salvatore/MotionProfile/build/CMakeFiles/CMakeTmp
+
+Run Build Command:"/usr/bin/make" "cmTC_ece4a/fast"
+/usr/bin/make -f CMakeFiles/cmTC_ece4a.dir/build.make CMakeFiles/cmTC_ece4a.dir/build
+make[1]: ingresso nella directory "/home/salvatore/MotionProfile/build/CMakeFiles/CMakeTmp"
+Building C object CMakeFiles/cmTC_ece4a.dir/CheckFunctionExists.c.o
+/usr/bin/cc   -DCHECK_FUNCTION_EXISTS=pthread_create   -o CMakeFiles/cmTC_ece4a.dir/CheckFunctionExists.c.o   -c /usr/share/cmake-3.10/Modules/CheckFunctionExists.c
+Linking C executable cmTC_ece4a
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_ece4a.dir/link.txt --verbose=1
+/usr/bin/cc  -DCHECK_FUNCTION_EXISTS=pthread_create    -rdynamic CMakeFiles/cmTC_ece4a.dir/CheckFunctionExists.c.o  -o cmTC_ece4a -lpthreads 
+/usr/bin/ld: impossibile trovare -lpthreads
+collect2: error: ld returned 1 exit status
+CMakeFiles/cmTC_ece4a.dir/build.make:97: recipe for target 'cmTC_ece4a' failed
+make[1]: *** [cmTC_ece4a] Error 1
+make[1]: uscita dalla directory "/home/salvatore/MotionProfile/build/CMakeFiles/CMakeTmp"
+Makefile:126: recipe for target 'cmTC_ece4a/fast' failed
+make: *** [cmTC_ece4a/fast] Error 2
+
+

@@ -1,0 +1,18 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/salvatore/MotionProfile/src/MotionProfile.cpp
+MotionProfile.h
+/home/salvatore/MotionProfile/src/MotionProfile.h
+
+/home/salvatore/MotionProfile/src/MotionProfile.h
+numeric
+-
+math.h
+-
+
