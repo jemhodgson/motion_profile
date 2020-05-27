@@ -76,9 +76,12 @@ void MotionProfile::setParam(double pos_i,double pos_f,double vel_max,double acc
             ta = tj;
             tv = s/v_max;
         } else {
-            tj = cbrt(s/(2.0*j_max));
-            ta = tj;
-            tv = 2.0*tj;
+            //tj = cbrt(s/(2.0*j_max));
+            //ta = tj;
+            //tv = 2.0*tj;
+            tj = a_max_div_j_max;
+			ta = v_max / a_max;
+			tv = s / v_max;
         }
     } else if (v_max >= va && s >= sa) {
         tj = a_max_div_j_max;
