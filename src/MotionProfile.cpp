@@ -2,7 +2,7 @@
 
 
 // MotionProfile
-// Generator of a smoth trajectory with an assigned max velocity, 
+// Generator of a smooth trajectory with an assigned max velocity, 
 // acceleration and jerk
 // Parameters:
 //  double pi       Initial position
@@ -141,7 +141,7 @@ void MotionProfile::setParam(double pos_i,double pos_f,double vel_max,double acc
 void MotionProfile::Compute(double t, double &p, double &v, double &a, double &j)
 {
     double dt;
-    if (t < 0) {
+    if (t <= 0) {
         j = 0;
         a = 0;
         v = 0;
