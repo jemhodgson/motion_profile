@@ -194,6 +194,47 @@ void test_pre_delay_holds_position_then_moves()
            "total duration should equal pre_delay plus the move duration");
 }
 
+void test_position_never_overshoots_target()
+{
+    // Position should be monotonic and never exceed the target, whether
+    // cruise is reached, whether the accel/decel plateaus are reached, and
+    // regardless of direction.
+    struct Case { const char* label; double pos_i; double pos_f; };
+    const Case cases[] = {
+        {"normal", 0.0, 10.0},
+        {"velocity-triangular", 0.0, 1.0},
+        {"acceleration-triangular", 0.0, 0.02},
+        {"reverse", 10.0, 0.0},
+    };
+
+    for (const auto& c : cases) {
+        auto params = basicParams();
+        params.pos_i = c.pos_i;
+        params.pos_f = c.pos_f;
+        motion_lib::MotionProfile profile;
+        profile.setParam(params);
+
+        const bool forward = c.pos_f >= c.pos_i;
+        const int steps = 2000;
+        double prev_p = c.pos_i;
+        for (int i = 0; i <= steps; ++i) {
+            const double t = profile.duration() * i / steps;
+            double p, v, a, j;
+            profile.compute(t, p, v, a, j);
+
+            if (forward) {
+                expect(p <= c.pos_f + 1e-6, "position should never exceed pos_f");
+                expect(p >= prev_p - 1e-9, "position should be monotonic non-decreasing");
+            }
+            else {
+                expect(p >= c.pos_f - 1e-6, "position should never undershoot pos_f (reverse move)");
+                expect(p <= prev_p + 1e-9, "position should be monotonic non-increasing");
+            }
+            prev_p = p;
+        }
+    }
+}
+
 } // namespace
 
 int main()
@@ -206,6 +247,7 @@ int main()
     test_asymmetric_acceleration_and_deceleration();
     test_distinct_jerk_values_change_the_profile();
     test_pre_delay_holds_position_then_moves();
+    test_position_never_overshoots_target();
 
     if (failures == 0) {
         std::printf("All tests passed.\n");
