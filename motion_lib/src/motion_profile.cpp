@@ -78,8 +78,15 @@ MotionProfile::MotionProfile()
       v3_(0), p3_(0),
       v4_(0), p4_(0),
       a5_(0), v5_(0), p5_(0),
-      a6_(0), v6_(0), p6_(0)
+      a6_(0), v6_(0), p6_(0),
+      phase_change_callback_(nullptr), phase_change_user_data_(nullptr), last_phase_index_(-1)
 {
+}
+
+void MotionProfile::setPhaseChangeCallback(PhaseChangeCallback callback, void* user_data)
+{
+    phase_change_callback_ = callback;
+    phase_change_user_data_ = user_data;
 }
 
 void MotionProfile::setParam(const MotionProfileParams& params)
@@ -168,6 +175,8 @@ void MotionProfile::setParam(const MotionProfileParams& params)
     t7_ = t6_ + t7;
 
     duration_ = pre_delay_ + t7_;
+
+    last_phase_index_ = -1;
 }
 
 void MotionProfile::compute(double t, double& p, double& v, double& a, double& j) const
@@ -175,20 +184,24 @@ void MotionProfile::compute(double t, double& p, double& v, double& a, double& j
     const double te = t - pre_delay_;
     double dt;
     double pp, vv, aa, jj;
+    Phase phase;
 
     if (te <= 0) {
+        phase = Phase::PreDelay;
         jj = 0;
         aa = 0;
         vv = 0;
         pp = 0;
     }
     else if (te < t1_) {
+        phase = Phase::AccelRampUp;
         jj = j_acc_start_;
         aa = j_acc_start_ * te;
         vv = 0.5 * aa * te;
         pp = j_acc_start_ * te * te * te / 6.0;
     }
     else if (te < t2_) {
+        phase = Phase::AccelHold;
         dt = te - t1_;
         jj = 0;
         aa = a1_;
@@ -196,6 +209,7 @@ void MotionProfile::compute(double t, double& p, double& v, double& a, double& j
         pp = p1_ + (v1_ + a1_ / 2.0 * dt) * dt;
     }
     else if (te < t3_) {
+        phase = Phase::AccelRampDown;
         dt = te - t2_;
         jj = -j_acc_end_;
         aa = a2_ - j_acc_end_ * dt;
@@ -203,12 +217,14 @@ void MotionProfile::compute(double t, double& p, double& v, double& a, double& j
         pp = p2_ + (v2_ + (a2_ - j_acc_end_ / 3.0 * dt) / 2.0 * dt) * dt;
     }
     else if (te < t4_) {
+        phase = Phase::Cruise;
         jj = 0;
         aa = 0;
         vv = v3_;
         pp = p3_ + v3_ * (te - t3_);
     }
     else if (te < t5_) {
+        phase = Phase::DecelRampUp;
         dt = te - t4_;
         jj = -j_dec_start_;
         aa = -j_dec_start_ * dt;
@@ -216,6 +232,7 @@ void MotionProfile::compute(double t, double& p, double& v, double& a, double& j
         pp = p4_ + (v4_ - j_dec_start_ / 6.0 * dt * dt) * dt;
     }
     else if (te < t6_) {
+        phase = Phase::DecelHold;
         dt = te - t5_;
         jj = 0;
         aa = a5_;
@@ -223,6 +240,7 @@ void MotionProfile::compute(double t, double& p, double& v, double& a, double& j
         pp = p5_ + (v5_ + a5_ / 2.0 * dt) * dt;
     }
     else if (te < t7_) {
+        phase = Phase::DecelRampDown;
         dt = te - t6_;
         jj = j_dec_end_;
         aa = a6_ + j_dec_end_ * dt;
@@ -230,10 +248,17 @@ void MotionProfile::compute(double t, double& p, double& v, double& a, double& j
         pp = p6_ + (v6_ + (a6_ + j_dec_end_ / 3.0 * dt) / 2.0 * dt) * dt;
     }
     else {
+        phase = Phase::Done;
         jj = 0;
         aa = 0;
         vv = 0;
         pp = std::fabs(pf_ - pi_);
+    }
+
+    const int phase_index = static_cast<int>(phase);
+    if (phase_change_callback_ && phase_index != last_phase_index_) {
+        last_phase_index_ = phase_index;
+        phase_change_callback_(phase, phase_change_user_data_);
     }
 
     j = dir_ * jj;

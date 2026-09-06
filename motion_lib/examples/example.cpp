@@ -2,6 +2,31 @@
 
 #include <cstdio>
 
+namespace {
+
+const char* phaseName(motion_lib::Phase phase)
+{
+    switch (phase) {
+        case motion_lib::Phase::PreDelay: return "PreDelay";
+        case motion_lib::Phase::AccelRampUp: return "AccelRampUp";
+        case motion_lib::Phase::AccelHold: return "AccelHold";
+        case motion_lib::Phase::AccelRampDown: return "AccelRampDown";
+        case motion_lib::Phase::Cruise: return "Cruise";
+        case motion_lib::Phase::DecelRampUp: return "DecelRampUp";
+        case motion_lib::Phase::DecelHold: return "DecelHold";
+        case motion_lib::Phase::DecelRampDown: return "DecelRampDown";
+        case motion_lib::Phase::Done: return "Done";
+    }
+    return "?";
+}
+
+void onPhaseChange(motion_lib::Phase phase, void* /*user_data*/)
+{
+    std::printf(">> entering phase: %s\n", phaseName(phase));
+}
+
+} // namespace
+
 int main()
 {
     motion_lib::MotionProfileParams params;
@@ -18,6 +43,7 @@ int main()
 
     motion_lib::MotionProfile profile;
     profile.setParam(params);
+    profile.setPhaseChangeCallback(onPhaseChange);
 
     const double duration = profile.duration();
     std::printf("trajectory duration (incl. pre-delay): %.4f s\n", duration);

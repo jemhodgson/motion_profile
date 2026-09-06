@@ -27,6 +27,27 @@ struct MotionProfileParams
     double pre_delay = 0.0;
 };
 
+// The segment of the profile a given time falls in. AccelHold, Cruise and
+// DecelHold are zero-duration (and so never reported) whenever the move
+// never reaches the corresponding limit -- see the triangular-move cases.
+enum class Phase
+{
+    PreDelay,
+    AccelRampUp,
+    AccelHold,
+    AccelRampDown,
+    Cruise,
+    DecelRampUp,
+    DecelHold,
+    DecelRampDown,
+    Done
+};
+
+// A plain function-pointer callback (no std::function, to keep this
+// dependency-free and usable from unmanaged/embedded code). user_data is
+// whatever was passed to setPhaseChangeCallback(), unchanged.
+using PhaseChangeCallback = void (*)(Phase phase, void* user_data);
+
 // MotionProfile
 //
 // Generates a smooth, jerk-limited (S-curve) point-to-point trajectory.
@@ -38,6 +59,8 @@ public:
     MotionProfile();
 
     // Configure the trajectory. See MotionProfileParams for field meanings.
+    // Also resets phase-change tracking, so the next compute() call fires
+    // the callback (if any) for whatever phase it lands in.
     void setParam(const MotionProfileParams& params);
 
     // Total trajectory duration in seconds (including pre_delay), once
@@ -51,6 +74,12 @@ public:
     //  v   Output velocity at time t
     //  a   Output acceleration at time t
     //  j   Output jerk at time t
+    // If a phase-change callback is installed and the phase at t differs
+    // from the phase reported by the previous compute() call, the
+    // callback fires before this call returns. Intended for compute()
+    // being called with non-decreasing t, as in a typical control loop;
+    // an out-of-order call still fires the callback for whatever phase
+    // change it observes relative to the previous call.
     void compute(double t, double& p, double& v, double& a, double& j) const;
 
     // Evaluate the trajectory at time t relative to a trajectory start time t0.
@@ -58,6 +87,13 @@ public:
     {
         compute(t - t0, p, v, a, j);
     }
+
+    // Install (or clear, by passing nullptr) a callback invoked from
+    // compute() on every phase transition. Not thread-safe: compute()
+    // tracks the last-reported phase internally, so don't call compute()
+    // on the same MotionProfile instance from multiple threads while a
+    // callback is set.
+    void setPhaseChangeCallback(PhaseChangeCallback callback, void* user_data = nullptr);
 
 private:
     double pi_;
@@ -80,6 +116,10 @@ private:
     double v4_, p4_;
     double a5_, v5_, p5_;
     double a6_, v6_, p6_;
+
+    PhaseChangeCallback phase_change_callback_;
+    void* phase_change_user_data_;
+    mutable int last_phase_index_;
 };
 
 } // namespace motion_lib

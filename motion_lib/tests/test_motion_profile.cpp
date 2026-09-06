@@ -194,6 +194,60 @@ void test_pre_delay_holds_position_then_moves()
            "total duration should equal pre_delay plus the move duration");
 }
 
+void test_phase_change_callback_fires_in_order()
+{
+    struct Log {
+        motion_lib::Phase phases[16];
+        int count = 0;
+    };
+
+    auto onPhaseChange = [](motion_lib::Phase phase, void* user_data) {
+        Log* log = static_cast<Log*>(user_data);
+        if (log->count < 16)
+            log->phases[log->count++] = phase;
+    };
+
+    auto params = basicParams();
+    params.pre_delay = 0.2;
+    motion_lib::MotionProfile profile;
+    profile.setParam(params);
+
+    Log log;
+    profile.setPhaseChangeCallback(onPhaseChange, &log);
+
+    const int steps = 500;
+    for (int i = 0; i <= steps; ++i) {
+        const double t = profile.duration() * i / steps;
+        double p, v, a, j;
+        profile.compute(t, p, v, a, j);
+    }
+
+    const motion_lib::Phase expected[] = {
+        motion_lib::Phase::PreDelay,
+        motion_lib::Phase::AccelRampUp,
+        motion_lib::Phase::AccelHold,
+        motion_lib::Phase::AccelRampDown,
+        motion_lib::Phase::Cruise,
+        motion_lib::Phase::DecelRampUp,
+        motion_lib::Phase::DecelHold,
+        motion_lib::Phase::DecelRampDown,
+        motion_lib::Phase::Done,
+    };
+    const int expected_count = sizeof(expected) / sizeof(expected[0]);
+
+    expect(log.count == expected_count, "callback should fire exactly once per phase entered");
+    for (int i = 0; i < std::min(log.count, expected_count); ++i) {
+        expect(log.phases[i] == expected[i], "phases should be reported in trajectory order");
+    }
+
+    // Clearing the callback should stop further notifications.
+    profile.setPhaseChangeCallback(nullptr, nullptr);
+    const int count_before = log.count;
+    double p, v, a, j;
+    profile.compute(0.0, p, v, a, j);
+    expect(log.count == count_before, "clearing the callback should stop notifications");
+}
+
 void test_position_never_overshoots_target()
 {
     // Position should be monotonic and never exceed the target, whether
@@ -247,6 +301,7 @@ int main()
     test_asymmetric_acceleration_and_deceleration();
     test_distinct_jerk_values_change_the_profile();
     test_pre_delay_holds_position_then_moves();
+    test_phase_change_callback_fires_in_order();
     test_position_never_overshoots_target();
 
     if (failures == 0) {
