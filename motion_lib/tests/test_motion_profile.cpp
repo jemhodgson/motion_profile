@@ -194,6 +194,154 @@ void test_pre_delay_holds_position_then_moves()
            "total duration should equal pre_delay plus the move duration");
 }
 
+void test_stop_decelerates_to_rest_from_cruise()
+{
+    auto params = basicParams();
+    motion_lib::MotionProfile profile;
+    profile.setParam(params);
+
+    double p, v, a, j;
+    profile.compute(2.5, p, v, a, j); // somewhere in cruise
+    expect(nearly_equal(a, 0.0), "sanity check: should be in cruise (a=0) before stopping");
+    const double p_at_stop = p;
+
+    profile.stop(2.5);
+    expect(profile.duration() < 5.63706, "stopping should shorten the trajectory versus completing the move");
+
+    double prev_p = p_at_stop;
+    bool monotonic = true;
+    const int steps = 1000;
+    for (int i = 0; i <= steps; ++i) {
+        const double t = 2.5 + (profile.duration() - 2.5) * i / steps;
+        profile.compute(t, p, v, a, j);
+        if (p < prev_p - 1e-9)
+            monotonic = false;
+        prev_p = p;
+    }
+    expect(monotonic, "position should stay monotonic while stopping");
+    expect(nearly_equal(v, 0.0, 1e-4), "velocity should reach zero after stopping");
+    expect(nearly_equal(a, 0.0, 1e-4), "acceleration should reach zero after stopping");
+    expect(p < params.pos_f - 1e-3, "stopping from cruise should land short of the original pos_f");
+    expect(p > p_at_stop - 1e-9, "the axis should not travel backwards while stopping");
+}
+
+void test_stop_while_still_accelerating_still_reaches_rest()
+{
+    // Aborting while acceleration is still positive is the hard case: the
+    // axis keeps speeding up briefly (jerk can't flip acceleration
+    // instantly) before the deceleration actually starts removing speed.
+    auto params = basicParams();
+    motion_lib::MotionProfile profile;
+    profile.setParam(params);
+
+    double p, v, a, j;
+    profile.compute(0.15, p, v, a, j);
+    expect(a > 0.0, "sanity check: should still be accelerating before stopping");
+    const double v_at_stop = v;
+
+    profile.stop(0.15);
+
+    double max_v = 0.0;
+    const int steps = 1000;
+    for (int i = 0; i <= steps; ++i) {
+        const double t = 0.15 + (profile.duration() - 0.15) * i / steps;
+        profile.compute(t, p, v, a, j);
+        max_v = std::max(max_v, v);
+    }
+    expect(max_v >= v_at_stop, "velocity may keep rising briefly right after an abort mid-acceleration");
+    expect(nearly_equal(v, 0.0, 1e-4), "velocity should still reach exactly zero");
+    expect(nearly_equal(a, 0.0, 1e-4), "acceleration should still reach exactly zero");
+}
+
+void test_stop_reports_stopping_then_stopped()
+{
+    struct Log {
+        motion_lib::Phase phases[8];
+        int count = 0;
+    };
+    auto onPhaseChange = [](motion_lib::Phase phase, void* user_data) {
+        Log* log = static_cast<Log*>(user_data);
+        if (log->count < 8)
+            log->phases[log->count++] = phase;
+    };
+
+    auto params = basicParams();
+    motion_lib::MotionProfile profile;
+    profile.setParam(params);
+    Log log;
+    profile.setPhaseChangeCallback(onPhaseChange, &log);
+
+    double p, v, a, j;
+    profile.compute(2.5, p, v, a, j);
+    profile.stop(2.5);
+
+    const int steps = 1000;
+    for (int i = 0; i <= steps; ++i) {
+        const double t = 2.5 + (profile.duration() - 2.5) * i / steps;
+        profile.compute(t, p, v, a, j);
+    }
+
+    expect(log.count >= 2, "should report at least Stopping and Stopped");
+    if (log.count >= 2) {
+        expect(log.phases[log.count - 2] == motion_lib::Phase::Stopping,
+               "second-to-last phase should be Stopping");
+        expect(log.phases[log.count - 1] == motion_lib::Phase::Stopped,
+               "last phase should be Stopped");
+    }
+}
+
+void test_stop_only_takes_effect_once()
+{
+    auto params = basicParams();
+    motion_lib::MotionProfile profile;
+    profile.setParam(params);
+
+    double p, v, a, j;
+    profile.compute(2.5, p, v, a, j);
+    profile.stop(2.5);
+    const double duration_after_first_stop = profile.duration();
+
+    profile.stop(0.1); // should be ignored: a stop was already requested
+    expect(nearly_equal(profile.duration(), duration_after_first_stop),
+           "a later stop() call should be ignored once one has taken effect");
+}
+
+void test_stop_before_motion_or_after_done_is_harmless()
+{
+    auto params = basicParams();
+
+    motion_lib::MotionProfile early;
+    early.setParam(params);
+    early.stop(0.0); // before pos_i's motion even begins
+    double p, v, a, j;
+    early.compute(early.duration(), p, v, a, j);
+    expect(nearly_equal(p, params.pos_i), "stopping before motion starts should rest at pos_i");
+    expect(nearly_equal(v, 0.0), "should be at rest");
+
+    motion_lib::MotionProfile late;
+    late.setParam(params);
+    late.stop(late.duration() + 100.0); // long after the move already finished
+    late.compute(late.duration(), p, v, a, j);
+    expect(nearly_equal(p, params.pos_f, 1e-3), "stopping after the move finished should rest at pos_f");
+    expect(nearly_equal(v, 0.0), "should be at rest");
+}
+
+void test_setParam_clears_a_previous_stop()
+{
+    auto params = basicParams();
+    motion_lib::MotionProfile profile;
+    profile.setParam(params);
+
+    double p, v, a, j;
+    profile.compute(1.0, p, v, a, j);
+    profile.stop(1.0);
+    expect(profile.duration() < 5.63706, "sanity check: stop should have taken effect");
+
+    profile.setParam(params); // re-planning the same move should drop the stop
+    profile.compute(profile.duration(), p, v, a, j);
+    expect(nearly_equal(p, params.pos_f, 1e-3), "re-calling setParam should discard the earlier stop");
+}
+
 void test_phase_change_callback_fires_in_order()
 {
     struct Log {
@@ -302,6 +450,12 @@ int main()
     test_distinct_jerk_values_change_the_profile();
     test_pre_delay_holds_position_then_moves();
     test_phase_change_callback_fires_in_order();
+    test_stop_decelerates_to_rest_from_cruise();
+    test_stop_while_still_accelerating_still_reaches_rest();
+    test_stop_reports_stopping_then_stopped();
+    test_stop_only_takes_effect_once();
+    test_stop_before_motion_or_after_done_is_harmless();
+    test_setParam_clears_a_previous_stop();
     test_position_never_overshoots_target();
 
     if (failures == 0) {

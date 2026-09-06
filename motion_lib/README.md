@@ -57,6 +57,33 @@ profile.compute(/*t=*/1.0, p, v, a, j);
 cruise velocity is found automatically and the trajectory still lands
 exactly on `pos_f`.
 
+### Phase-change notifications
+
+```cpp
+profile.setPhaseChangeCallback([](motion_lib::Phase phase, void* /*user_data*/) {
+    // e.g. Phase::Cruise, Phase::DecelRampUp, ...
+}, /*user_data=*/nullptr);
+```
+
+`compute()` fires this whenever the phase it lands in differs from the
+previous call, so a control loop calling `compute()` every cycle is
+notified the instant the move enters cruise, starts decelerating,
+finishes, etc.
+
+### Aborting a move
+
+```cpp
+profile.stop(/*t=*/1.2); // abandon the plan, decelerate to a stop from here
+```
+
+From that time on, `compute()` returns points on a new stop trajectory
+(`Phase::Stopping`, then `Phase::Stopped` once at rest) instead of the
+original plan, using the same `dec_max`/`jerk_dec_start`/`jerk_dec_end`
+limits the planned deceleration already uses. It comes to rest wherever
+that takes it -- not necessarily `pos_f` -- and `duration()` updates to
+reflect the new, shorter length. Calling `setParam()` again clears any
+earlier stop.
+
 ## Test
 
 ```sh

@@ -67,10 +67,71 @@ double accelDecelDistance(
     return p3 + p7;
 }
 
+// Solve a jerk-limited ramp that removes velocity delta_v (>= 0), starting
+// from acceleration a_start (which may be positive, zero, or negative --
+// wherever the trajectory happens to be), bringing acceleration down to
+// -limit (or as far as needed) then back to exactly 0 as velocity reaches
+// exactly 0. jerk_in is the rate acceleration is reduced from a_start;
+// jerk_out is the rate it's brought back to 0. Requires -limit <= a_start.
+//
+// This generalizes solveRamp() (which is the a_start == 0 case, solvable
+// in closed form) to an arbitrary starting acceleration, needed because a
+// stop can be requested mid-ramp. With a_start != 0 the equations no
+// longer reduce to a clean square root, so the no-plateau case is solved
+// by bisection instead.
+void solveRampFromState(
+    double delta_v,
+    double a_start,
+    double limit,
+    double jerk_in,
+    double jerk_out,
+    double& t_in,
+    double& t_plateau,
+    double& t_out,
+    double& peak)
+{
+    const double t_in_full = (a_start + limit) / jerk_in;
+    const double seg1_dv_full = a_start * t_in_full - 0.5 * jerk_in * t_in_full * t_in_full;
+    const double seg2_dv_full = -0.5 * limit * limit / jerk_out;
+    const double dv_at_full = -(seg1_dv_full + seg2_dv_full);
+
+    if (delta_v >= dv_at_full) {
+        peak = -limit;
+        t_in = t_in_full;
+        t_out = limit / jerk_out;
+        t_plateau = (delta_v - dv_at_full) / limit;
+        return;
+    }
+
+    // Triangular case: peak must stay between -limit (most braking) and
+    // min(a_start, 0) (least braking -- acceleration can only be reduced
+    // by this ramp, never increased, and must reach <= 0 for jerk_out to
+    // bring it back to exactly 0 in non-negative time).
+    double lo = -limit;
+    double hi = (a_start < 0.0) ? a_start : 0.0;
+    for (int i = 0; i < 100; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        const double tt_in = (a_start - mid) / jerk_in;
+        const double seg1 = a_start * tt_in - 0.5 * jerk_in * tt_in * tt_in;
+        const double tt_out = -mid / jerk_out;
+        const double seg2 = mid * tt_out + 0.5 * jerk_out * tt_out * tt_out;
+        const double removed = -(seg1 + seg2);
+        if (removed < delta_v)
+            hi = mid; // not enough braking yet -- push peak further negative
+        else
+            lo = mid;
+    }
+    peak = 0.5 * (lo + hi);
+    t_in = (a_start - peak) / jerk_in;
+    t_plateau = 0.0;
+    t_out = -peak / jerk_out;
+}
+
 } // namespace
 
 MotionProfile::MotionProfile()
     : pi_(0), pf_(0), dir_(1), pre_delay_(0), duration_(0),
+      acc_max_(0), dec_max_(0),
       j_acc_start_(0), j_acc_end_(0), j_dec_start_(0), j_dec_end_(0),
       t1_(0), t2_(0), t3_(0), t4_(0), t5_(0), t6_(0), t7_(0),
       a1_(0), v1_(0), p1_(0),
@@ -79,7 +140,14 @@ MotionProfile::MotionProfile()
       v4_(0), p4_(0),
       a5_(0), v5_(0), p5_(0),
       a6_(0), v6_(0), p6_(0),
-      phase_change_callback_(nullptr), phase_change_user_data_(nullptr), last_phase_index_(-1)
+      phase_change_callback_(nullptr), phase_change_user_data_(nullptr), last_phase_index_(-1),
+      stop_requested_(false), stop_time_(0),
+      stop_t1_(0), stop_t2_(0), stop_t3_(0),
+      stop_p0_(0), stop_v0_(0), stop_a0_(0),
+      stop_peak_(0),
+      stop_v1_(0), stop_p1_(0),
+      stop_v2_(0), stop_p2_(0),
+      stop_pf_(0)
 {
 }
 
@@ -96,6 +164,8 @@ void MotionProfile::setParam(const MotionProfileParams& params)
     dir_ = (pf_ >= pi_) ? 1.0 : -1.0;
     pre_delay_ = params.pre_delay;
 
+    acc_max_ = params.acc_max;
+    dec_max_ = params.dec_max;
     j_acc_start_ = params.jerk_acc_start;
     j_acc_end_ = params.jerk_acc_end;
     j_dec_start_ = params.jerk_dec_start;
@@ -177,14 +247,12 @@ void MotionProfile::setParam(const MotionProfileParams& params)
     duration_ = pre_delay_ + t7_;
 
     last_phase_index_ = -1;
+    stop_requested_ = false;
 }
 
-void MotionProfile::compute(double t, double& p, double& v, double& a, double& j) const
+void MotionProfile::evaluatePlannedMove(double te, Phase& phase, double& pp, double& vv, double& aa, double& jj) const
 {
-    const double te = t - pre_delay_;
     double dt;
-    double pp, vv, aa, jj;
-    Phase phase;
 
     if (te <= 0) {
         phase = Phase::PreDelay;
@@ -254,6 +322,88 @@ void MotionProfile::compute(double t, double& p, double& v, double& a, double& j
         vv = 0;
         pp = std::fabs(pf_ - pi_);
     }
+}
+
+void MotionProfile::evaluateStop(double t, Phase& phase, double& pp, double& vv, double& aa, double& jj) const
+{
+    const double ta = t - stop_time_;
+
+    if (ta < stop_t1_) {
+        phase = Phase::Stopping;
+        jj = -j_dec_start_;
+        aa = stop_a0_ - j_dec_start_ * ta;
+        vv = stop_v0_ + (stop_a0_ - j_dec_start_ / 2.0 * ta) * ta;
+        pp = stop_p0_ + (stop_v0_ + (stop_a0_ - j_dec_start_ / 3.0 * ta) / 2.0 * ta) * ta;
+    }
+    else if (ta < stop_t2_) {
+        phase = Phase::Stopping;
+        const double dt = ta - stop_t1_;
+        jj = 0;
+        aa = stop_peak_;
+        vv = stop_v1_ + stop_peak_ * dt;
+        pp = stop_p1_ + (stop_v1_ + stop_peak_ / 2.0 * dt) * dt;
+    }
+    else if (ta < stop_t3_) {
+        phase = Phase::Stopping;
+        const double dt = ta - stop_t2_;
+        jj = j_dec_end_;
+        aa = stop_peak_ + j_dec_end_ * dt;
+        vv = stop_v2_ + (stop_peak_ + j_dec_end_ / 2.0 * dt) * dt;
+        pp = stop_p2_ + (stop_v2_ + (stop_peak_ + j_dec_end_ / 3.0 * dt) / 2.0 * dt) * dt;
+    }
+    else {
+        phase = Phase::Stopped;
+        jj = 0;
+        aa = 0;
+        vv = 0;
+        pp = stop_pf_;
+    }
+}
+
+void MotionProfile::stop(double t)
+{
+    if (stop_requested_)
+        return;
+
+    Phase phase_unused;
+    double p0, v0, a0, j0;
+    evaluatePlannedMove(t - pre_delay_, phase_unused, p0, v0, a0, j0);
+
+    double t_in, t_plateau, t_out, peak;
+    solveRampFromState(v0, a0, dec_max_, j_dec_start_, j_dec_end_, t_in, t_plateau, t_out, peak);
+
+    stop_requested_ = true;
+    stop_time_ = t;
+    stop_p0_ = p0;
+    stop_v0_ = v0;
+    stop_a0_ = a0;
+    stop_peak_ = peak;
+
+    stop_v1_ = v0 + (a0 - j_dec_start_ / 2.0 * t_in) * t_in;
+    stop_p1_ = p0 + (v0 + (a0 - j_dec_start_ / 3.0 * t_in) / 2.0 * t_in) * t_in;
+
+    stop_v2_ = stop_v1_ + peak * t_plateau;
+    stop_p2_ = stop_p1_ + (stop_v1_ + peak / 2.0 * t_plateau) * t_plateau;
+
+    stop_pf_ = stop_p2_ + (stop_v2_ + (peak + j_dec_end_ / 3.0 * t_out) / 2.0 * t_out) * t_out;
+
+    stop_t1_ = t_in;
+    stop_t2_ = t_in + t_plateau;
+    stop_t3_ = t_in + t_plateau + t_out;
+
+    duration_ = stop_time_ + stop_t3_;
+    last_phase_index_ = -1;
+}
+
+void MotionProfile::compute(double t, double& p, double& v, double& a, double& j) const
+{
+    double pp, vv, aa, jj;
+    Phase phase;
+
+    if (stop_requested_ && t >= stop_time_)
+        evaluateStop(t, phase, pp, vv, aa, jj);
+    else
+        evaluatePlannedMove(t - pre_delay_, phase, pp, vv, aa, jj);
 
     const int phase_index = static_cast<int>(phase);
     if (phase_change_callback_ && phase_index != last_phase_index_) {

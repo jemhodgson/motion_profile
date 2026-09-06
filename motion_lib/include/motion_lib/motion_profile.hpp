@@ -30,6 +30,8 @@ struct MotionProfileParams
 // The segment of the profile a given time falls in. AccelHold, Cruise and
 // DecelHold are zero-duration (and so never reported) whenever the move
 // never reaches the corresponding limit -- see the triangular-move cases.
+// Stopping/Stopped only occur after stop() has been called; they replace
+// whatever phase the planned move would otherwise have been in.
 enum class Phase
 {
     PreDelay,
@@ -40,7 +42,9 @@ enum class Phase
     DecelRampUp,
     DecelHold,
     DecelRampDown,
-    Done
+    Done,
+    Stopping,
+    Stopped
 };
 
 // A plain function-pointer callback (no std::function, to keep this
@@ -95,13 +99,28 @@ public:
     // callback is set.
     void setPhaseChangeCallback(PhaseChangeCallback callback, void* user_data = nullptr);
 
+    // Abort the planned move: from time t onward (same time base as
+    // compute()), abandon it and decelerate to a stop from wherever the
+    // trajectory is at time t, using dec_max, jerk_dec_start and
+    // jerk_dec_end -- the same limits the planned deceleration already
+    // uses. Only the first call takes effect; later calls are ignored
+    // until the next setParam(). After this, compute() for any t' >= t
+    // returns points on the stop trajectory (Phase::Stopping, then
+    // Phase::Stopped once at rest) instead of the original plan, and
+    // duration() reflects the new, shorter total length.
+    void stop(double t);
+
 private:
+    void evaluatePlannedMove(double te, Phase& phase, double& p, double& v, double& a, double& j) const;
+    void evaluateStop(double t, Phase& phase, double& p, double& v, double& a, double& j) const;
+
     double pi_;
     double pf_;
     double dir_;
     double pre_delay_;
     double duration_;
 
+    double acc_max_, dec_max_;
     double j_acc_start_, j_acc_end_, j_dec_start_, j_dec_end_;
 
     // Cumulative phase-boundary times, relative to the start of motion
@@ -120,6 +139,17 @@ private:
     PhaseChangeCallback phase_change_callback_;
     void* phase_change_user_data_;
     mutable int last_phase_index_;
+
+    // Stop-trajectory state, set by stop(). All in the same local
+    // (magnitude-space, pre-dir_/pi_) frame as the boundary state above.
+    bool stop_requested_;
+    double stop_time_;
+    double stop_t1_, stop_t2_, stop_t3_; // cumulative, relative to stop_time_
+    double stop_p0_, stop_v0_, stop_a0_; // state at the moment stop() was called
+    double stop_peak_;                   // peak (most negative) acceleration reached, in [-dec_max_, 0]
+    double stop_v1_, stop_p1_;           // end of ramp-to-peak
+    double stop_v2_, stop_p2_;           // end of hold at peak
+    double stop_pf_;                     // final rest position
 };
 
 } // namespace motion_lib
