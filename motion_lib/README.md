@@ -57,6 +57,10 @@ profile.compute(/*t=*/1.0, p, v, a, j);
 cruise velocity is found automatically and the trajectory still lands
 exactly on `pos_f`.
 
+`profile.remaining(t)` returns how much of the trajectory is left from
+time `t` -- including any `pre_delay` still to come -- clamped to zero
+once the move is done. It reflects `stop()`'s shortened duration too.
+
 ### Phase-change notifications
 
 ```cpp

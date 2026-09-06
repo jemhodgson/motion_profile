@@ -342,6 +342,32 @@ void test_setParam_clears_a_previous_stop()
     expect(nearly_equal(p, params.pos_f, 1e-3), "re-calling setParam should discard the earlier stop");
 }
 
+void test_remaining_counts_down_to_zero()
+{
+    auto params = basicParams();
+    params.pre_delay = 0.5;
+    motion_lib::MotionProfile profile;
+    profile.setParam(params);
+
+    expect(nearly_equal(profile.remaining(0.0), profile.duration()),
+           "remaining at t=0 should equal the full duration, including pre_delay");
+    expect(nearly_equal(profile.remaining(0.25), profile.duration() - 0.25),
+           "remaining during pre_delay should count down normally");
+    expect(nearly_equal(profile.remaining(profile.duration()), 0.0),
+           "remaining at duration() should be exactly zero");
+    expect(nearly_equal(profile.remaining(profile.duration() + 10.0), 0.0),
+           "remaining should clamp to zero past duration(), not go negative");
+
+    // Should reflect a stop()'s shortened duration too.
+    double p, v, a, j;
+    profile.compute(2.5, p, v, a, j);
+    profile.stop(2.5);
+    expect(nearly_equal(profile.remaining(2.5), profile.duration() - 2.5),
+           "remaining should reflect the shortened duration after stop()");
+    expect(nearly_equal(profile.remaining(profile.duration()), 0.0),
+           "remaining should still reach exactly zero once stopped");
+}
+
 void test_phase_change_callback_fires_in_order()
 {
     struct Log {
@@ -456,6 +482,7 @@ int main()
     test_stop_only_takes_effect_once();
     test_stop_before_motion_or_after_done_is_harmless();
     test_setParam_clears_a_previous_stop();
+    test_remaining_counts_down_to_zero();
     test_position_never_overshoots_target();
 
     if (failures == 0) {

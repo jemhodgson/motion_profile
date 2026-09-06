@@ -68,8 +68,19 @@ public:
     void setParam(const MotionProfileParams& params);
 
     // Total trajectory duration in seconds (including pre_delay), once
-    // setParam() has been called.
+    // setParam() has been called. Reflects the new, shorter length after
+    // stop() takes effect.
     double duration() const { return duration_; }
+
+    // Time remaining, in seconds, from time t (same time base as
+    // compute()) until the trajectory is done -- including any pre_delay
+    // still to come, and reflecting a stop() if one is in effect. Clamped
+    // to 0 for t at or past duration(); never negative.
+    double remaining(double t) const
+    {
+        const double r = duration_ - t;
+        return r > 0.0 ? r : 0.0;
+    }
 
     // Evaluate the trajectory at time t (with t = 0 at the start of
     // pre_delay, i.e. the start of the whole profile).
