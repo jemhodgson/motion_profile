@@ -6,6 +6,11 @@ namespace motion_lib {
 
 namespace {
 
+// Interval-halving iterations for the bisections below. A double has 52
+// mantissa bits, so each iteration past that point can no longer narrow
+// the interval by a representable amount; 60 leaves a small margin.
+constexpr int kBisectionIterations = 60;
+
 // Solve the timing of a jerk-in / constant-limit-plateau / jerk-out ramp
 // that changes velocity by delta_v, bounded by a magnitude limit. If the
 // limit can't be reached before delta_v is used up, the plateau collapses
@@ -109,7 +114,7 @@ void solveRampFromState(
     // bring it back to exactly 0 in non-negative time).
     double lo = -limit;
     double hi = (a_start < 0.0) ? a_start : 0.0;
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < kBisectionIterations; ++i) {
         const double mid = 0.5 * (lo + hi);
         const double tt_in = (a_start - mid) / jerk_in;
         const double seg1 = a_start * tt_in - 0.5 * jerk_in * tt_in * tt_in;
@@ -189,7 +194,7 @@ void MotionProfile::setParam(const MotionProfileParams& params)
     }
     else {
         double lo = 0.0, hi = params.vel_max;
-        for (int i = 0; i < 100; ++i) {
+        for (int i = 0; i < kBisectionIterations; ++i) {
             const double mid = 0.5 * (lo + hi);
             const double d = accelDecelDistance(
                 mid,
