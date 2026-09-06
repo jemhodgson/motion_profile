@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <random>
 
 namespace {
 
@@ -463,6 +464,121 @@ void test_position_never_overshoots_target()
     }
 }
 
+// Property-based fuzz test: generate a large number of random (but
+// physically sane) parameter sets, including extreme/lopsided ones, and
+// check invariants that must hold for *any* valid trajectory rather than
+// values specific to one hand-picked case. About a third of trials also
+// abort the move at a random time, to stress the stop() ramp solver.
+//
+// The seed is fixed so a failure is reproducible: rerun with the same
+// seed and it fails on the same trial. If this ever fails, print the
+// trial's parameters (already included in the failure message) and feed
+// them into a standalone repro rather than trying to read them off a
+// stack trace.
+void test_randomized_trajectories_are_always_valid()
+{
+    std::mt19937 rng(20240607);
+    std::uniform_real_distribution<double> pos_dist(-50.0, 50.0);
+    std::uniform_real_distribution<double> vel_dist(0.01, 20.0);
+    std::uniform_real_distribution<double> limit_dist(0.01, 30.0);
+    std::uniform_real_distribution<double> jerk_dist(0.01, 200.0);
+    std::uniform_real_distribution<double> delay_dist(0.0, 1.0);
+    std::uniform_real_distribution<double> unit_dist(0.0, 1.0);
+
+    const int trials = 1000;
+    int trials_with_failures = 0;
+    int stop_trials = 0;
+    double worst_velocity_overshoot_after_stop = 0.0;
+
+    for (int trial = 0; trial < trials; ++trial) {
+        motion_lib::MotionProfileParams params;
+        params.pos_i = pos_dist(rng);
+        params.pos_f = pos_dist(rng);
+        params.vel_max = vel_dist(rng);
+        params.acc_max = limit_dist(rng);
+        params.dec_max = limit_dist(rng);
+        params.jerk_acc_start = jerk_dist(rng);
+        params.jerk_acc_end = jerk_dist(rng);
+        params.jerk_dec_start = jerk_dist(rng);
+        params.jerk_dec_end = jerk_dist(rng);
+        params.pre_delay = delay_dist(rng);
+
+        motion_lib::MotionProfile profile;
+        profile.setParam(params);
+
+        const bool forward = params.pos_f >= params.pos_i;
+        const double far_bound = params.pos_f; // the trajectory must never overshoot past its own target
+
+        const bool will_stop = unit_dist(rng) < 0.3;
+        const double stop_at = will_stop ? profile.duration() * unit_dist(rng) : -1.0;
+        bool has_stopped = false;
+        if (will_stop)
+            ++stop_trials;
+
+        char ctx[256];
+        std::snprintf(ctx, sizeof(ctx),
+            "trial %d: pi=%.4f pf=%.4f vmax=%.4f amax=%.4f dmax=%.4f "
+            "ja0=%.4f ja1=%.4f jd0=%.4f jd1=%.4f delay=%.4f stop_at=%.4f",
+            trial, params.pos_i, params.pos_f, params.vel_max, params.acc_max, params.dec_max,
+            params.jerk_acc_start, params.jerk_acc_end, params.jerk_dec_start, params.jerk_dec_end,
+            params.pre_delay, stop_at);
+
+        const int failures_before = failures;
+        double prev_p = params.pos_i;
+        const int samples = 250;
+        // Snapshot the planned duration for the sampling schedule: stop()
+        // shrinks profile.duration() mid-loop, and re-reading it per
+        // iteration would make t jump backward right after the abort.
+        const double planned_duration = profile.duration();
+
+        for (int i = 0; i <= samples; ++i) {
+            const double t = planned_duration * i / samples;
+
+            if (will_stop && !has_stopped && t >= stop_at) {
+                profile.stop(stop_at);
+                has_stopped = true;
+            }
+
+            double p, v, a, j;
+            profile.compute(t, p, v, a, j);
+
+            expect(std::isfinite(p) && std::isfinite(v) && std::isfinite(a) && std::isfinite(j), ctx);
+
+            if (forward) {
+                expect(p >= prev_p - 1e-6, ctx); // monotonic
+                if (!has_stopped)
+                    expect(p <= far_bound + 1e-3, ctx); // never overshoot pos_f on the planned move
+            }
+            else {
+                expect(p <= prev_p + 1e-6, ctx);
+                if (!has_stopped)
+                    expect(p >= far_bound - 1e-3, ctx);
+            }
+            if (!has_stopped)
+                expect(std::fabs(v) <= params.vel_max + 1e-3, ctx);
+            else
+                worst_velocity_overshoot_after_stop = std::max(worst_velocity_overshoot_after_stop, std::fabs(v) - params.vel_max);
+
+            prev_p = p;
+        }
+
+        double p, v, a, j;
+        profile.compute(profile.duration() + 1.0, p, v, a, j); // well past the end
+        expect(nearly_equal(v, 0.0, 1e-3), ctx);
+        expect(nearly_equal(a, 0.0, 1e-3), ctx);
+        if (!will_stop)
+            expect(nearly_equal(p, params.pos_f, 1e-2), ctx);
+
+        if (failures > failures_before)
+            ++trials_with_failures;
+    }
+
+    std::printf(
+        "randomized trials: %d run (%d included a stop()), %d had at least one failure; "
+        "worst post-stop |v| overshoot past vel_max: %.6f\n",
+        trials, stop_trials, trials_with_failures, worst_velocity_overshoot_after_stop);
+}
+
 } // namespace
 
 int main()
@@ -484,6 +600,7 @@ int main()
     test_setParam_clears_a_previous_stop();
     test_remaining_counts_down_to_zero();
     test_position_never_overshoots_target();
+    test_randomized_trajectories_are_always_valid();
 
     if (failures == 0) {
         std::printf("All tests passed.\n");
