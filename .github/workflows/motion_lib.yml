@@ -1,0 +1,26 @@
+name: motion_lib
+
+on:
+  push:
+    paths:
+      - 'motion_lib/**'
+      - '.github/workflows/motion_lib.yml'
+  pull_request:
+    paths:
+      - 'motion_lib/**'
+      - '.github/workflows/motion_lib.yml'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S motion_lib -B motion_lib/build
+
+      - name: Build
+        run: cmake --build motion_lib/build
+
+      - name: Test
+        run: ctest --test-dir motion_lib/build --output-on-failure

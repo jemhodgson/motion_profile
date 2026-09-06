@@ -1,0 +1,12 @@
+# Build output
+build/
+bin/
+*.o
+*.a
+*.so
+
+# Editor/OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store
